@@ -6,6 +6,8 @@ set(CMAKE_CSTANDARD 11)
 pico_sdk_init()
 add_executable(charger
 	main.c
+	ili9488.c
+	testimage.h
 )
 
 target_link_libraries(charger pico_stdlib hardware_spi)
