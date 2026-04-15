@@ -3,6 +3,8 @@
 #include "hardware/spi.h"
 #include "ili9488.h"
 #include "testimage.h"
+#include "pico/cyw43_arch.h"
+#include "lwip/tcp.h"
 
 #define SPI_PORT spi0
 #define PIN_MISO 0  // Physical Pin 1
@@ -34,9 +36,18 @@ int main() {
     gpio_set_dir(PIN_DC, GPIO_OUT);
     gpio_init(PIN_RST);
     gpio_set_dir(PIN_RST, GPIO_OUT);
-
     lcd_init();
-    draw_image_cpu(test_image_data,320,480);;
+    if(cyw43_arch_init()){ // returns 0 on success
+	    // wifi failure
+        fill_screen(0xFF, 0x00, 0x00); // Red
+    }
+    cyw43_arch_enable_sta_mode();
+    if(cyw43_arch_wifi_connect_blocking(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK)){ // returns 0 on success
+	    // network failure
+        fill_screen(0xFF, 0x00, 0x00); // Red
+    }
+	// download image
+    draw_image_cpu(test_image_data,320,480);
 
     while (1) {
         // Cycle colors to test
