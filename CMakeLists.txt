@@ -9,7 +9,6 @@ pico_sdk_init()
 add_executable(charger
 	main.c
 	ili9488.c
-	testimage.h
 	lwipopts.h
 )
 target_include_directories(charger PRIVATE ${CMAKE_CURRENT_LIST_DIR})

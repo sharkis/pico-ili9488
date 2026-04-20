@@ -2,7 +2,6 @@
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
 #include "ili9488.h"
-#include "testimage.h"
 #include "pico/cyw43_arch.h"
 #include "lwip/tcp.h"
 
@@ -47,7 +46,6 @@ int main() {
         fill_screen(0xFF, 0x00, 0x00); // Red
     }
 	// download image
-    draw_image_cpu(test_image_data,320,480);
 
     while (1) {
         // Cycle colors to test
