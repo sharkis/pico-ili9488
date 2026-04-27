@@ -23,54 +23,62 @@ uint32_t total_received = 0;
 bool header_found = false;
 
 struct tcp_pcb *client_pcb;
+static err_t pcb_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
+    if (p == NULL) {
+        // --- CONNECTION CLOSED BY SERVER ---
+        printf("Download complete. Received %u bytes. Drawing...\n", total_received);
 
-static err_t pcb_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err){
-	if(p==NULL){
-		// download finished
-		draw_image_cpu(full_image_buffer,320,480);
-		tcp_close(tpcb);
-		return ERR_OK;
-	}
+        // Draw the image even if it's slightly incomplete
+        if (total_received > 0) {
+            draw_image_cpu(full_image_buffer, 320, 480);
+        }
 
-	uint8_t *payload = (uint8_t *)p->payload;
-	uint32_t len = p->len;
-	uint32_t offset;
-	if (!header_found) {
-        // Search for the HTTP header end \r\n\r\n
-        for (uint32_t i = 0; i < len - 4; i++) {
-            if (payload[i] == '\r' && payload[i+1] == '\n' &&
-                payload[i+2] == '\r' && payload[i+3] == '\n') {
+        // Reset for next time
+        header_found = false;
+        total_received = 0;
+        tcp_close(tpcb);
+        return ERR_OK;
+    }
+
+    // Use p->tot_len to get the size of the whole packet chain
+    uint32_t packet_len = p->tot_len;
+
+    if (!header_found) {
+        // Find the header (\r\n\r\n)
+        // We copy the start of the packet to a temp buffer to search it
+        uint8_t temp[512];
+        uint16_t search_len = packet_len > 512 ? 512 : packet_len;
+        pbuf_copy_partial(p, temp, search_len, 0);
+
+        for (uint32_t i = 0; i < search_len - 4; i++) {
+            if (temp[i] == '\r' && temp[i+1] == '\n' &&
+                temp[i+2] == '\r' && temp[i+3] == '\n') {
 
                 header_found = true;
-                uint32_t img_data_start_offset = i + 4;
-                uint32_t first_chunk_len = len - img_data_start_offset;
+                uint32_t img_start_offset = i + 4;
+                uint32_t img_len = packet_len - img_start_offset;
 
-                // Copy first chunk into our big buffer
-                if (first_chunk_len > 0) {
-                    memcpy(full_image_buffer, payload + img_data_start_offset, first_chunk_len);
-                    total_received = first_chunk_len;
+                // Copy the remainder of this packet into the global buffer
+                if (img_len > 0) {
+                    pbuf_copy_partial(p, full_image_buffer, img_len, img_start_offset);
+                    total_received = img_len;
                 }
                 break;
             }
         }
     } else {
-        // Append data to the buffer, checking for overflow
-        if (total_received + len <= IMG_SIZE) {
-            memcpy(full_image_buffer + total_received, payload, len);
-            total_received += len;
-        } else {
-            // Buffer safety: handle cases where server sends more than expected
-            uint32_t remaining = IMG_SIZE - total_received;
-            if (remaining > 0) {
-                memcpy(full_image_buffer + total_received, payload, remaining);
-                total_received += remaining;
-            }
+        // Append data to the buffer
+        if (total_received + packet_len <= IMG_SIZE) {
+            pbuf_copy_partial(p, full_image_buffer + total_received, packet_len, 0);
+            total_received += packet_len;
         }
     }
-	tcp_recved(tpcb, p->tot_len);
+
+    tcp_recved(tpcb, p->tot_len);
     pbuf_free(p);
-	return ERR_OK;
+    return ERR_OK;
 }
+
 static err_t pcb_connected(void *arg,struct tcp_pcb *tpcb, err_t err){
 	char request[256];
 	snprintf(request, sizeof(request),"GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n",SERVER_IP);
@@ -110,15 +118,15 @@ int main() {
     gpio_init(PIN_RST);
     gpio_set_dir(PIN_RST, GPIO_OUT);
     lcd_init();
-	fill_screen(0xFF, 0xFF, 0x00); // Red
+	fill_screen(0x07E0); // Green
     if(cyw43_arch_init()){ // returns 0 on success
 	    // wifi failure
-        fill_screen(0xFF, 0x00, 0x00); // Red
+	fill_screen(0x7800); // Green
     }
     cyw43_arch_enable_sta_mode();
     if(cyw43_arch_wifi_connect_blocking(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK)){ // returns 0 on success
 	    // network failure
-        fill_screen(0xFF, 0x00, 0x00); // Red
+	fill_screen(0x7800); // Green
     }
 
     start_download();

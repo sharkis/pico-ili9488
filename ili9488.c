@@ -99,50 +99,61 @@ lcd_write_data(0x08);
     lcd_write_cmd(CMD_DISPLAY_ON);
 }
 
-void fill_screen(uint8_t r, uint8_t g, uint8_t b) {
-    // Set column range 0-319, page range 0-479
+
+/**
+ * Sets the drawing area (window) on the display.
+ * x0, y0: Top-left corner
+ * x1, y1: Bottom-right corner
+ */
+void set_display_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
+    // Column Address Set (0x2A)
     lcd_write_cmd(CMD_COLUMN_ADDR);
-    lcd_write_data(0x00); lcd_write_data(0x00);
-    lcd_write_data(0x01); lcd_write_data(0x3F);
+    lcd_write_data(x0 >> 8);
+    lcd_write_data(x0 & 0xFF);
+    lcd_write_data(x1 >> 8);
+    lcd_write_data(x1 & 0xFF);
 
+    // Page/Row Address Set (0x2B)
     lcd_write_cmd(CMD_PAGE_ADDR);
-    lcd_write_data(0x00); lcd_write_data(0x00);
-    lcd_write_data(0x01); lcd_write_data(0xDF);
-
-    lcd_write_cmd(CMD_RAM_WRITE);
-    
-    gpio_put(PIN_DC, 1);
-    gpio_put(PIN_CS, 0);
-    for (int i = 0; i < 320 * 480; i++) {
-        spi_write_blocking(SPI_PORT, &r, 1);
-        spi_write_blocking(SPI_PORT, &g, 1);
-        spi_write_blocking(SPI_PORT, &b, 1);
-    }
-    gpio_put(PIN_CS, 1);
+    lcd_write_data(y0 >> 8);
+    lcd_write_data(y0 & 0xFF);
+    lcd_write_data(y1 >> 8);
+    lcd_write_data(y1 & 0xFF);
 }
 
 void draw_image_cpu(const uint8_t *image_data, uint16_t w, uint16_t h) {
-    // 1. Define the area to be painted
-    lcd_write_cmd(CMD_COLUMN_ADDR);
-    lcd_write_data(0x00); lcd_write_data(0x00);         // Start X = 0
-    lcd_write_data((w-1) >> 8); lcd_write_data((w-1) & 0xFF); // End X
+    // 1. Tell the display the dimensions of the buffer
+    set_display_window(0, 0, w - 1, h - 1);
 
-    lcd_write_cmd(CMD_PAGE_ADDR);
-    lcd_write_data(0x00); lcd_write_data(0x00);         // Start Y = 0
-    lcd_write_data((h-1) >> 8); lcd_write_data((h-1) & 0xFF); // End Y
-
-    // 2. Tell the ILI9488 we are sending pixel data
+    // 2. Ready the RAM write
     lcd_write_cmd(CMD_RAM_WRITE);
 
     // 3. Set Pins for Data Mode
     gpio_put(PIN_DC, 1);
     gpio_put(PIN_CS, 0);
 
-    // 4. Push the entire buffer via the CPU
-    // The SDK handles the heavy lifting here
-    size_t total_bytes = (size_t)w * h * 2;
-    spi_write_blocking(SPI_PORT, image_data, total_bytes);
+    // 4. Push the buffer. Note: size is w * h * 2 for RGB565
+    spi_write_blocking(SPI_PORT, image_data, (size_t)w * h * 2);
 
     // 5. Clean up
+    gpio_put(PIN_CS, 1);
+}
+
+void fill_screen(uint16_t color_565) {
+    // Set the window to the full screen
+    set_display_window(0, 0, 319, 479);
+
+    lcd_write_cmd(CMD_RAM_WRITE);
+
+    gpio_put(PIN_DC, 1);
+    gpio_put(PIN_CS, 0);
+
+    uint8_t high_byte = (color_565 >> 8) & 0xFF;
+    uint8_t low_byte = color_565 & 0xFF;
+
+    for (int i = 0; i < 320 * 480; i++) {
+        spi_write_blocking(SPI_PORT, &high_byte, 1);
+        spi_write_blocking(SPI_PORT, &low_byte, 1);
+    }
     gpio_put(PIN_CS, 1);
 }
