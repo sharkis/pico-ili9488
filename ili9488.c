@@ -71,7 +71,7 @@ void lcd_init() {
     lcd_write_data(0x80);
 
     lcd_write_cmd(CMD_PIXEL_FMT); // Interface Pixel Format
-    lcd_write_data(0x66); // 18 bit color
+    lcd_write_data(0x55); // 16 bit color
 
     lcd_write_cmd(0xB1); // Frame rate
     lcd_write_data(0xA0);
@@ -140,7 +140,7 @@ void draw_image_cpu(const uint8_t *image_data, uint16_t w, uint16_t h) {
 
     // 4. Push the entire buffer via the CPU
     // The SDK handles the heavy lifting here
-    size_t total_bytes = (size_t)w * h * 3;
+    size_t total_bytes = (size_t)w * h * 2;
     spi_write_blocking(SPI_PORT, image_data, total_bytes);
 
     // 5. Clean up
