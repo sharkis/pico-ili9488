@@ -1,9 +1,33 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
+#include "pico/bootrom.h"
 #include "hardware/spi.h"
+#include "hardware/sync.h"
+#include "hardware/structs/ioqspi.h"
+#include "hardware/structs/sio.h"
 #include "ili9488.h"
 #include "pico/cyw43_arch.h"
 #include "lwip/tcp.h"
+
+bool __no_inline_not_in_flash_func(get_bootsel_button)(void) {
+    const uint CS_PIN_INDEX = 1;
+    uint32_t flags = save_and_disable_interrupts();
+    hw_write_masked(&ioqspi_hw->io[CS_PIN_INDEX].ctrl,
+                    GPIO_OVERRIDE_LOW << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
+                    IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_BITS);
+    for (volatile int i = 0; i < 1000; ++i);
+#if PICO_RP2040
+    #define CS_BIT (1u << 1)
+#else
+    #define CS_BIT SIO_GPIO_HI_IN_QSPI_CSN_BITS
+#endif
+    bool pressed = !(sio_hw->gpio_hi_in & CS_BIT);
+    hw_write_masked(&ioqspi_hw->io[CS_PIN_INDEX].ctrl,
+                    GPIO_OVERRIDE_NORMAL << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
+                    IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_BITS);
+    restore_interrupts(flags);
+    return pressed;
+}
 
 #define SPI_PORT spi0
 #define PIN_MISO 0  // Physical Pin 1
@@ -16,7 +40,7 @@
 
 #define SERVER_IP "192.168.1.223"
 #define SERVER_PORT 3000
-#define IMG_SIZE (320 * 480 * 2)
+#define IMG_SIZE (320 * 480 * 3)
 
 uint8_t full_image_buffer[IMG_SIZE];
 uint32_t total_received = 0;
@@ -84,7 +108,6 @@ static err_t pcb_connected(void *arg,struct tcp_pcb *tpcb, err_t err){
 	snprintf(request, sizeof(request),"GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n",SERVER_IP);
 	tcp_write(tpcb,request,strlen(request),TCP_WRITE_FLAG_COPY);
 	return ERR_OK;
-
 }
 
 void start_download(){
@@ -118,19 +141,30 @@ int main() {
     gpio_init(PIN_RST);
     gpio_set_dir(PIN_RST, GPIO_OUT);
     lcd_init();
-	fill_screen(0x07E0); // Green
+	fill_screen(0xFF,0,0); // Red
     if(cyw43_arch_init()){ // returns 0 on success
 	    // wifi failure
-	fill_screen(0x7800); // Green
+	fill_screen(0,0,0xFF); // Blue
     }
     cyw43_arch_enable_sta_mode();
     if(cyw43_arch_wifi_connect_blocking(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK)){ // returns 0 on success
 	    // network failure
-	fill_screen(0x7800); // Green
+	fill_screen(0xFF,0,0); // Red
     }
+	fill_screen(0,0xFF,0); // Green
 
+			       /*
     start_download();
+    */
     while (1) {
-	    tight_loop_contents();
+	    if (get_bootsel_button()) {
+		    bool held = true;
+		    for (int i = 0; i < 10; i++) {
+			    sleep_ms(10);
+			    if (!get_bootsel_button()) { held = false; break; }
+		    }
+		    if (held) reset_usb_boot(0, 0);
+	    }
+	    sleep_ms(20);
     }
 }
