@@ -139,6 +139,22 @@ void draw_image_cpu(const uint8_t *image_data, uint16_t w, uint16_t h) {
 	gpio_put(PIN_CS, 1);
 }
 
+void lcd_begin_draw(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
+	set_display_window(x0, y0, x1, y1);
+	lcd_write_cmd(CMD_RAM_WRITE);
+	gpio_put(PIN_DC, 1);
+	gpio_put(PIN_CS, 0);
+}
+
+void lcd_stream_data(const uint8_t *data, size_t len) {
+	if (len == 0) return;
+	spi_write_blocking(SPI_PORT, data, len);
+}
+
+void lcd_end_draw(void) {
+	gpio_put(PIN_CS, 1);
+}
+
 void fill_screen(uint8_t r, uint8_t g, uint8_t b) {
 	// Set the window to the full screen
 	set_display_window(0, 0, 319, 479);

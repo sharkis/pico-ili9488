@@ -38,64 +38,93 @@ bool __no_inline_not_in_flash_func(get_bootsel_button)(void) {
 #define PIN_DC   20 // Choose any free GPIO for Data/Command
 #define PIN_RST  21 // Choose any free GPIO for Reset
 
-#define SERVER_IP "192.168.1.223"
+#define SERVER_IP "192.168.12.212"
 #define SERVER_PORT 3000
-#define IMG_SIZE (320 * 480 * 3)
+#define IMG_WIDTH  320
+#define IMG_HEIGHT 480
+#define IMG_SIZE   (IMG_WIDTH * IMG_HEIGHT * 3)
+#define POLL_INTERVAL_MS 60000
 
-uint8_t full_image_buffer[IMG_SIZE];
-uint32_t total_received = 0;
-bool header_found = false;
+static uint32_t total_received = 0;
+static bool header_found = false;
+static bool draw_started = false;
+static bool download_in_progress = false;
+static uint32_t last_download_ms = 0;
+
+// Stream a pbuf chain to the LCD starting at byte offset within the chain.
+static void stream_pbuf_to_lcd(struct pbuf *p, uint16_t offset) {
+    struct pbuf *q = p;
+    uint16_t skip = offset;
+
+    // Skip whole pbufs that fall before the offset
+    while (q != NULL && skip >= q->len) {
+        skip -= q->len;
+        q = q->next;
+    }
+
+    // Stream from each remaining pbuf in the chain
+    while (q != NULL) {
+        uint32_t remaining = IMG_SIZE - total_received;
+        if (remaining == 0) break;
+
+        uint16_t chunk_len = q->len - skip;
+        if (chunk_len > remaining) chunk_len = (uint16_t)remaining;
+
+        lcd_stream_data((const uint8_t *)q->payload + skip, chunk_len);
+        total_received += chunk_len;
+        skip = 0;
+        q = q->next;
+    }
+}
 
 struct tcp_pcb *client_pcb;
 static err_t pcb_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
     if (p == NULL) {
         // --- CONNECTION CLOSED BY SERVER ---
-        printf("Download complete. Received %u bytes. Drawing...\n", total_received);
+        printf("Download complete. Streamed %u bytes.\n", total_received);
 
-        // Draw the image even if it's slightly incomplete
-        if (total_received > 0) {
-            draw_image_cpu(full_image_buffer, 320, 480);
+        if (draw_started) {
+            lcd_end_draw();
         }
 
         // Reset for next time
         header_found = false;
+        draw_started = false;
         total_received = 0;
+        download_in_progress = false;
         tcp_close(tpcb);
         return ERR_OK;
     }
 
-    // Use p->tot_len to get the size of the whole packet chain
-    uint32_t packet_len = p->tot_len;
+    uint16_t packet_len = p->tot_len;
 
     if (!header_found) {
-        // Find the header (\r\n\r\n)
-        // We copy the start of the packet to a temp buffer to search it
+        // Find the HTTP header terminator (\r\n\r\n). Assume it fits in the
+        // first pbuf chain prefix (typical HTTP response headers are small).
         uint8_t temp[512];
         uint16_t search_len = packet_len > 512 ? 512 : packet_len;
         pbuf_copy_partial(p, temp, search_len, 0);
 
-        for (uint32_t i = 0; i < search_len - 4; i++) {
+        for (uint16_t i = 0; i + 3 < search_len; i++) {
             if (temp[i] == '\r' && temp[i+1] == '\n' &&
                 temp[i+2] == '\r' && temp[i+3] == '\n') {
 
                 header_found = true;
-                uint32_t img_start_offset = i + 4;
-                uint32_t img_len = packet_len - img_start_offset;
+                uint16_t img_start_offset = i + 4;
 
-                // Copy the remainder of this packet into the global buffer
-                if (img_len > 0) {
-                    pbuf_copy_partial(p, full_image_buffer, img_len, img_start_offset);
-                    total_received = img_len;
+                // Begin the LCD write window once; data will be streamed in
+                lcd_begin_draw(0, 0, IMG_WIDTH - 1, IMG_HEIGHT - 1);
+                draw_started = true;
+
+                // Stream any image bytes that arrived after the header in this packet
+                if (img_start_offset < packet_len) {
+                    stream_pbuf_to_lcd(p, img_start_offset);
                 }
                 break;
             }
         }
     } else {
-        // Append data to the buffer
-        if (total_received + packet_len <= IMG_SIZE) {
-            pbuf_copy_partial(p, full_image_buffer + total_received, packet_len, 0);
-            total_received += packet_len;
-        }
+        stream_pbuf_to_lcd(p, 0);
     }
 
     tcp_recved(tpcb, p->tot_len);
@@ -117,6 +146,8 @@ void start_download(){
 	client_pcb = tcp_new();
 	tcp_recv(client_pcb, pcb_recv);
 	tcp_connect(client_pcb,&remote_addr,SERVER_PORT,pcb_connected);
+	download_in_progress = true;
+	last_download_ms = to_ms_since_boot(get_absolute_time());
 }
 
 int main() {
@@ -153,9 +184,8 @@ int main() {
     }
 	fill_screen(0,0xFF,0); // Green
 
-			       /*
     start_download();
-    */
+
     while (1) {
 	    if (get_bootsel_button()) {
 		    bool held = true;
@@ -164,6 +194,10 @@ int main() {
 			    if (!get_bootsel_button()) { held = false; break; }
 		    }
 		    if (held) reset_usb_boot(0, 0);
+	    }
+	    if (!download_in_progress &&
+	        (to_ms_since_boot(get_absolute_time()) - last_download_ms) >= POLL_INTERVAL_MS) {
+		    start_download();
 	    }
 	    sleep_ms(20);
     }
